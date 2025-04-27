@@ -3,15 +3,10 @@ import numpy as np
 from bidict import bidict
 from flask import (
     Flask, render_template, request,
-    redirect, url_for, session, jsonify
+    redirect, url_for, session
 )
 from random import choice
 from tensorflow import keras
-import subprocess
-import tensorflow as tf
-
-# Disable GPU for TensorFlow
-tf.config.set_visible_devices([], 'GPU')
 
 # Label encoder/decoder
 ENCODER = bidict({
@@ -22,13 +17,10 @@ ENCODER = bidict({
     'Y': 25, 'Z': 26
 })
 
-# Create Flask app
 app = Flask(__name__)
+app.secret_key = 'alphabet_quiz'
 
-# Set the secret key from environment variables for better security in production
-app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'default_secret_key')
-
-MODEL_PATH = 'letter.keras'  # Model filename
+MODEL_PATH = 'letter.keras'  # Path to the model file
 
 # Helper to initialize empty numpy files
 def initialize_empty_files():
@@ -48,12 +40,11 @@ def safe_load(file_path, default_value):
     except (EOFError, ValueError, FileNotFoundError):
         return default_value
 
-# Load the model
+# Load model (on-the-fly when needed)
 def load_model():
-    if os.path.exists(MODEL_PATH):
-        return keras.models.load_model(MODEL_PATH)
-    else:
+    if not os.path.exists(MODEL_PATH):
         raise FileNotFoundError(f"Model file '{MODEL_PATH}' not found!")
+    return keras.models.load_model(MODEL_PATH)
 
 @app.route('/')
 def index():
@@ -108,7 +99,10 @@ def practice_post():
         pixels = pixels.split(',')
         img = np.array(pixels).astype(float).reshape(1, 50, 50, 1)
 
+        # Load the model on-the-fly
         model = load_model()
+
+        # Predict the letter
         prediction = model.predict(img)
         pred_letter_index = np.argmax(prediction, axis=-1)[0]
 
@@ -117,6 +111,7 @@ def practice_post():
         if pred_letter is None:
             raise ValueError(f"Prediction {pred_letter_index} not found in encoder!")
 
+        # Compare prediction to the expected letter
         correct = 'yes' if pred_letter == letter else 'no'
         next_letter = choice(list(ENCODER.keys()))
 
@@ -126,21 +121,5 @@ def practice_post():
         print(f"[ERROR] during practice: {e}")
         return render_template('error.html', error_message=str(e))
 
-@app.route('/train-model', methods=['POST'])
-def train_model():
-    try:
-        # Run the training script as a subprocess
-        subprocess.run(['python', 'train_model.py'], check=True)
-
-        # After training, reload the model
-        model = load_model()
-
-        return jsonify({"message": "Model training started and completed successfully!"}), 200
-    except subprocess.CalledProcessError as e:
-        return jsonify({"error": str(e)}), 500
-    except FileNotFoundError as e:
-        return jsonify({"error": str(e)}), 404
-
 if __name__ == '__main__':
-    # Ensure the app binds to the correct port for deployment
-    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)), debug=False)
+    app.run(debug=True)
