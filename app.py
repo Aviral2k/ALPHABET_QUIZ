@@ -8,7 +8,8 @@ from flask import (
 from random import choice
 from tensorflow import keras
 import subprocess
-
+import tensorflow as tf
+tf.config.set_visible_devices([], 'GPU')
 # Label encoder/decoder
 ENCODER = bidict({
     'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6,
