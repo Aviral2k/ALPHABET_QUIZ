@@ -1,0 +1,8 @@
+Flask
+numpy
+bidict
+tensorflow
+matplotlib
+seaborn
+scikit-learn
+gunicorn
