@@ -1,12 +1,13 @@
 import os
 import numpy as np
 from bidict import bidict
-from flask import Flask, render_template, request, redirect, url_for, session
+from flask import (
+    Flask, render_template, request,
+    redirect, url_for, session, jsonify
+)
 from random import choice
 from tensorflow import keras
-from nbconvert import PythonExporter
 import subprocess
-import time
 
 # Label encoder/decoder
 ENCODER = bidict({
@@ -20,7 +21,7 @@ ENCODER = bidict({
 app = Flask(__name__)
 app.secret_key = 'alphabet_quiz'
 
-MODEL_PATH = 'letter.keras'  # <--- updated model filename here
+MODEL_PATH = 'letter.keras'  # Model filename
 
 # Helper to initialize empty numpy files
 def initialize_empty_files():
@@ -40,16 +41,12 @@ def safe_load(file_path, default_value):
     except (EOFError, ValueError, FileNotFoundError):
         return default_value
 
-# Run the model training notebook on the fly
-def run_training_notebook():
-    try:
-        # Run the Jupyter notebook as a script using subprocess
-        print("Training the model... this may take a while.")
-        subprocess.run(["jupyter", "nbconvert", "--to", "notebook", "--execute", "model_training.ipynb"], check=True)
-        print("Model training completed and saved!")
-    except subprocess.CalledProcessError as e:
-        print(f"Error running notebook: {e}")
-        raise
+# Load the model
+def load_model():
+    if os.path.exists(MODEL_PATH):
+        return keras.models.load_model(MODEL_PATH)
+    else:
+        raise FileNotFoundError(f"Model file '{MODEL_PATH}' not found!")
 
 @app.route('/')
 def index():
@@ -87,26 +84,6 @@ def add_data_post():
         session['message'] = "Failed to add data."
         return redirect(url_for('add_data_get'))
 
-@app.route('/train', methods=['GET'])
-def train_model():
-    try:
-        # Trigger model training
-        run_training_notebook()
-        
-        # After training, reload the model to be used for predictions
-        if os.path.exists(MODEL_PATH):
-            model = keras.models.load_model(MODEL_PATH)
-            session['message'] = "Model trained successfully!"
-        else:
-            session['message'] = "Error: Model was not saved correctly after training."
-
-        return redirect(url_for('index'))
-
-    except Exception as e:
-        print(f"[ERROR] during model training: {e}")
-        session['message'] = "Failed to train model."
-        return redirect(url_for('index'))
-
 @app.route('/practice', methods=['GET'])
 def practice_get():
     letter = choice(list(ENCODER.keys()))
@@ -124,10 +101,7 @@ def practice_post():
         pixels = pixels.split(',')
         img = np.array(pixels).astype(float).reshape(1, 50, 50, 1)
 
-        if not os.path.exists(MODEL_PATH):
-            raise FileNotFoundError(f"Model file '{MODEL_PATH}' not found!")
-
-        model = keras.models.load_model(MODEL_PATH)
+        model = load_model()
         prediction = model.predict(img)
         pred_letter_index = np.argmax(prediction, axis=-1)[0]
 
@@ -144,6 +118,21 @@ def practice_post():
     except Exception as e:
         print(f"[ERROR] during practice: {e}")
         return render_template('error.html', error_message=str(e))
+
+@app.route('/train-model', methods=['POST'])
+def train_model():
+    try:
+        # Run the training script as a subprocess
+        subprocess.run(['python', 'train_model.py'], check=True)
+
+        # After training, reload the model
+        model = load_model()
+
+        return jsonify({"message": "Model training started and completed successfully!"}), 200
+    except subprocess.CalledProcessError as e:
+        return jsonify({"error": str(e)}), 500
+    except FileNotFoundError as e:
+        return jsonify({"error": str(e)}), 404
 
 if __name__ == '__main__':
     app.run(debug=True)
