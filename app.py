@@ -9,7 +9,10 @@ from random import choice
 from tensorflow import keras
 import subprocess
 import tensorflow as tf
+
+# Disable GPU for TensorFlow
 tf.config.set_visible_devices([], 'GPU')
+
 # Label encoder/decoder
 ENCODER = bidict({
     'A': 1, 'B': 2, 'C': 3, 'D': 4, 'E': 5, 'F': 6,
@@ -19,8 +22,11 @@ ENCODER = bidict({
     'Y': 25, 'Z': 26
 })
 
+# Create Flask app
 app = Flask(__name__)
-app.secret_key = 'alphabet_quiz'
+
+# Set the secret key from environment variables for better security in production
+app.secret_key = os.environ.get('FLASK_SECRET_KEY', 'default_secret_key')
 
 MODEL_PATH = 'letter.keras'  # Model filename
 
@@ -136,4 +142,5 @@ def train_model():
         return jsonify({"error": str(e)}), 404
 
 if __name__ == '__main__':
-    app.run(debug=True)
+    # Ensure the app binds to the correct port for deployment
+    app.run(host='0.0.0.0', port=int(os.environ.get('PORT', 10000)), debug=False)
