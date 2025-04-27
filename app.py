@@ -20,7 +20,7 @@ ENCODER = bidict({
 app = Flask(__name__)
 app.secret_key = 'alphabet_quiz'
 
-MODEL_PATH = 'letter.keras'  # <--- updated model filename here
+MODEL_PATH = 'letter.keras'  # saved model path
 
 # Helper to initialize empty numpy files
 def initialize_empty_files():
@@ -39,6 +39,51 @@ def safe_load(file_path, default_value):
         return np.load(file_path, allow_pickle=True)
     except (EOFError, ValueError, FileNotFoundError):
         return default_value
+
+# Train model if not exists
+def train_model_if_needed():
+    if not os.path.exists(MODEL_PATH):
+        print("[INFO] Model not found. Training new model...")
+
+        # Load existing data
+        labels = safe_load('data/labels.npy', np.array([], dtype='<U1'))
+        images = safe_load('data/images.npy', np.empty((0, 50, 50)))
+
+        if len(labels) == 0 or len(images) == 0:
+            raise RuntimeError("No training data available. Please add some samples first!")
+
+        # Prepare data
+        x_train = images.reshape(-1, 50, 50, 1)
+        y_train = np.array([ENCODER[l] for l in labels])
+
+        num_classes = len(ENCODER)
+
+        # Build model
+        model = keras.models.Sequential([
+            keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(50, 50, 1)),
+            keras.layers.MaxPooling2D((2, 2)),
+            keras.layers.Conv2D(64, (3, 3), activation='relu'),
+            keras.layers.MaxPooling2D((2, 2)),
+            keras.layers.Flatten(),
+            keras.layers.Dense(128, activation='relu'),
+            keras.layers.Dense(num_classes + 1, activation='softmax')  # +1 because ENCODER values start from 1
+        ])
+
+        model.compile(optimizer='adam',
+                      loss='sparse_categorical_crossentropy',
+                      metrics=['accuracy'])
+
+        # Train model
+        model.fit(x_train, y_train, epochs=10)
+
+        # Save model
+        model.save(MODEL_PATH)
+        print(f"[INFO] Model trained and saved to {MODEL_PATH}")
+    else:
+        print("[INFO] Found saved model, skipping training.")
+
+# Training check before anything else
+train_model_if_needed()
 
 @app.route('/')
 def index():
@@ -92,9 +137,6 @@ def practice_post():
 
         pixels = pixels.split(',')
         img = np.array(pixels).astype(float).reshape(1, 50, 50, 1)
-
-        if not os.path.exists(MODEL_PATH):
-            raise FileNotFoundError(f"Model file '{MODEL_PATH}' not found!")
 
         model = keras.models.load_model(MODEL_PATH)
         prediction = model.predict(img)
