@@ -1,12 +1,12 @@
 import os
 import numpy as np
 from bidict import bidict
-from flask import (
-    Flask, render_template, request,
-    redirect, url_for, session
-)
+from flask import Flask, render_template, request, redirect, url_for, session
 from random import choice
 from tensorflow import keras
+from nbconvert import PythonExporter
+import subprocess
+import time
 
 # Label encoder/decoder
 ENCODER = bidict({
@@ -20,7 +20,7 @@ ENCODER = bidict({
 app = Flask(__name__)
 app.secret_key = 'alphabet_quiz'
 
-MODEL_PATH = 'letter.keras'  # saved model path
+MODEL_PATH = 'letter.keras'  # <--- updated model filename here
 
 # Helper to initialize empty numpy files
 def initialize_empty_files():
@@ -40,50 +40,16 @@ def safe_load(file_path, default_value):
     except (EOFError, ValueError, FileNotFoundError):
         return default_value
 
-# Train model if not exists
-def train_model_if_needed():
-    if not os.path.exists(MODEL_PATH):
-        print("[INFO] Model not found. Training new model...")
-
-        # Load existing data
-        labels = safe_load('data/labels.npy', np.array([], dtype='<U1'))
-        images = safe_load('data/images.npy', np.empty((0, 50, 50)))
-
-        if len(labels) == 0 or len(images) == 0:
-            raise RuntimeError("No training data available. Please add some samples first!")
-
-        # Prepare data
-        x_train = images.reshape(-1, 50, 50, 1)
-        y_train = np.array([ENCODER[l] for l in labels])
-
-        num_classes = len(ENCODER)
-
-        # Build model
-        model = keras.models.Sequential([
-            keras.layers.Conv2D(32, (3, 3), activation='relu', input_shape=(50, 50, 1)),
-            keras.layers.MaxPooling2D((2, 2)),
-            keras.layers.Conv2D(64, (3, 3), activation='relu'),
-            keras.layers.MaxPooling2D((2, 2)),
-            keras.layers.Flatten(),
-            keras.layers.Dense(128, activation='relu'),
-            keras.layers.Dense(num_classes + 1, activation='softmax')  # +1 because ENCODER values start from 1
-        ])
-
-        model.compile(optimizer='adam',
-                      loss='sparse_categorical_crossentropy',
-                      metrics=['accuracy'])
-
-        # Train model
-        model.fit(x_train, y_train, epochs=10)
-
-        # Save model
-        model.save(MODEL_PATH)
-        print(f"[INFO] Model trained and saved to {MODEL_PATH}")
-    else:
-        print("[INFO] Found saved model, skipping training.")
-
-# Training check before anything else
-train_model_if_needed()
+# Run the model training notebook on the fly
+def run_training_notebook():
+    try:
+        # Run the Jupyter notebook as a script using subprocess
+        print("Training the model... this may take a while.")
+        subprocess.run(["jupyter", "nbconvert", "--to", "notebook", "--execute", "model_training.ipynb"], check=True)
+        print("Model training completed and saved!")
+    except subprocess.CalledProcessError as e:
+        print(f"Error running notebook: {e}")
+        raise
 
 @app.route('/')
 def index():
@@ -121,6 +87,26 @@ def add_data_post():
         session['message'] = "Failed to add data."
         return redirect(url_for('add_data_get'))
 
+@app.route('/train', methods=['GET'])
+def train_model():
+    try:
+        # Trigger model training
+        run_training_notebook()
+        
+        # After training, reload the model to be used for predictions
+        if os.path.exists(MODEL_PATH):
+            model = keras.models.load_model(MODEL_PATH)
+            session['message'] = "Model trained successfully!"
+        else:
+            session['message'] = "Error: Model was not saved correctly after training."
+
+        return redirect(url_for('index'))
+
+    except Exception as e:
+        print(f"[ERROR] during model training: {e}")
+        session['message'] = "Failed to train model."
+        return redirect(url_for('index'))
+
 @app.route('/practice', methods=['GET'])
 def practice_get():
     letter = choice(list(ENCODER.keys()))
@@ -137,6 +123,9 @@ def practice_post():
 
         pixels = pixels.split(',')
         img = np.array(pixels).astype(float).reshape(1, 50, 50, 1)
+
+        if not os.path.exists(MODEL_PATH):
+            raise FileNotFoundError(f"Model file '{MODEL_PATH}' not found!")
 
         model = keras.models.load_model(MODEL_PATH)
         prediction = model.predict(img)
